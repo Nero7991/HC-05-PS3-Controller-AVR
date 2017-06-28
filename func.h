@@ -29,8 +29,17 @@
 #define MTD_SLAW_ACK 0x28
 #define MTDS_SLAR_ACK 0x40
 #define MTDR_SLAR_NACK 0x58
-#define START 0x08
+//#define START 0x08
 #define RESTART 0x10
+
+#define HCI_ACL_DATA_PACKET 0x02
+#define HCI_SCO_DATA_PACKET 0x03
+#define HCI_EVENT_PACKET 0x04
+
+
+
+//#define UART_DEBUG 1
+//#define ULTRA_DEBUG 1
 
 typedef struct bitstruct
 {
@@ -48,6 +57,9 @@ typedef struct bitstruct
 #define RTS GET_BITFIELD(PORTB).bit6
 #define CTS GET_BITFIELD(PINB).bit7
 
+void setThingsUp();
+uint64_t millis();
+void delay(uint16_t t);
 void setTimer3(unsigned int count, unsigned char prescale);
 void Init_CTC_T2(unsigned char prescale);
 void Init_PWM_T3(unsigned char prescale);
@@ -66,14 +78,14 @@ void Init_PWM_T0(unsigned char prescale);
 void Init_PWM_T1(unsigned char prescale);
 void Init_PWM_T2(unsigned char prescale);
 void ERROR(unsigned char twsr);
-void printString1(char*);
+void printString1(const char*);
 void printChar(unsigned char data);
 unsigned char hexToASCII(unsigned char data);
 char *hexToString(unsigned char data);
 unsigned char charToHex(char *p);
 void printStringNewline(char *);
-void printStringCRNL0(char *);
-void printStringCRNL1(char *p);
+void printStringCRNL0(const char *);
+void printStringCRNL1(const char *p);
 char *receiveStringCRNL();
 void setTimer1(unsigned int count, unsigned char prescale);
 void holdPosition(unsigned int x,unsigned int y);
@@ -81,5 +93,8 @@ void transmitSensorData();
 void fanSpeed(unsigned char a0, unsigned char a2, unsigned char b0, unsigned char b2);
 void BT_Init();
 void USART1_Disable();
+void Notify(const char* ,uint8_t);
+void NotifyS(const char d, uint8_t num);
+void D_PrintHex(uint8_t,uint8_t);
 
 #endif /* FUNC_H_ */

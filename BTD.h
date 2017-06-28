@@ -17,9 +17,12 @@
 
 #ifndef _btd_h_
 #define _btd_h_
-#include <stdint.h>
-#include <string.h>
 #include "func.h"
+
+#define DEBUG_UART_HOST 1;
+#define EXTRADEBUG 1;
+extern volatile uint8_t EVENT_RECEIVED,ACL_DATA_RECEIVED;
+
 
 //PID and VID of the Sony PS3 devices
 #define PS3_VID                 0x054C  // Sony Corporation
@@ -44,19 +47,20 @@
 #define HCI_BDADDR_STATE                3
 #define HCI_LOCAL_VERSION_STATE         4
 #define HCI_SET_NAME_STATE              5
-#define HCI_CHECK_DEVICE_SERVICE        6
+#define HCI_WRITE_EN_STATE              6
+#define HCI_CHECK_DEVICE_SERVICE        7
 
-#define HCI_INQUIRY_STATE               7 // These three states are only used if it should pair and connect to a device
-#define HCI_CONNECT_DEVICE_STATE        8
-#define HCI_CONNECTED_DEVICE_STATE      9
+#define HCI_INQUIRY_STATE               8 // These three states are only used if it should pair and connect to a device
+#define HCI_CONNECT_DEVICE_STATE        9
+#define HCI_CONNECTED_DEVICE_STATE      10
 
-#define HCI_SCANNING_STATE              10
-#define HCI_CONNECT_IN_STATE            11
-#define HCI_REMOTE_NAME_STATE           12
-#define HCI_CONNECTED_STATE             13
-#define HCI_DISABLE_SCAN_STATE          14
-#define HCI_DONE_STATE                  15
-#define HCI_DISCONNECT_STATE            16
+#define HCI_SCANNING_STATE              11
+#define HCI_CONNECT_IN_STATE            12
+#define HCI_REMOTE_NAME_STATE           13
+#define HCI_CONNECTED_STATE             14
+#define HCI_DISABLE_SCAN_STATE          15
+#define HCI_DONE_STATE                  16
+#define HCI_DISCONNECT_STATE            17
 
 /* HCI event flags*/
 #define HCI_FLAG_CMD_COMPLETE           (1UL << 0)
@@ -186,18 +190,25 @@
 #define WI_PROTOCOL_BT      0x01 // Bluetooth Programming Interface
 
 #define BTD_MAX_ENDPOINTS   4
-#define BTD_NUM_SERVICES    4 // Max number of Bluetooth services - if you need more than 4 simply increase this number
+#define BTD_NUM_SERVICES    1 // Max number of Bluetooth services - if you need more than 4 simply increase this number
 
 #define PAIR    1
+class BluetoothService;
+
 extern uint8_t hcibuf[300];
-//class BluetoothService;
 
 /**
  * The Bluetooth Dongle class will take care of all the USB communication
  * and then pass the data to the BluetoothService classes.
  */
-class BTD {
+class BTD{
 public:
+		
+		BTD();
+		
+		void registerBluetoothService(BluetoothService *pService) {
+			btService= pService;
+		  };
 		
         /** @name HCI Commands */
         /**
@@ -205,7 +216,9 @@ public:
          * @param data   Data to send.
          * @param nbytes Number of bytes to send.
          */
-        void HCI_Command(uint8_t* data, uint16_t nbytes);
+		uint8_t BPoll();
+		
+        void HCI_Command(uint8_t *data, uint16_t nbytes);
         /** Reset the Bluetooth dongle. */
         void hci_reset();
         /** Read the Bluetooth address of the dongle. */
@@ -338,7 +351,7 @@ public:
         /** The name you wish to make the dongle show up as. It is set automatically by the SPP library. */
         const char* btdName = "Oren";
         /** The pin you wish to make the dongle use for authentication. It is set automatically by the SPP and BTHID library. */
-        const char* btdPin;
+        const char* btdPin = "3105";
 
         /** The bluetooth dongles Bluetooth address. */
         uint8_t my_bdaddr[6];
@@ -394,6 +407,13 @@ public:
 
 protected:
 
+		/** Device address. */
+		uint8_t bAddress;
+		
+		/** Next poll time based on poll interval taken from the USB descriptor. */
+		uint32_t qNextPollTime;
+
+
         /** Bluetooth dongle control endpoint. */
         static const uint8_t BTD_CONTROL_PIPE;
         /** HCI event endpoint index. */
@@ -408,10 +428,14 @@ protected:
          * @param ep_ptr Pointer to USB Endpoint Descriptor.
          */
 
-private:
+
+public:
+		void Initialize(); // Set all variables, endpoint structs etc. to default values
+		BluetoothService *btService;
+
 		uint16_t PID, VID; // PID and VID of device connected
 
-        uint8_t pollInterval;
+        uint8_t pollInterval = 0;	
         bool bPollEnable;
 
         bool pairWiiUsingSync; // True if pairing was done using the Wii SYNC button.
@@ -422,7 +446,7 @@ private:
         /* Variables used by high level HCI task */
         uint8_t hci_state; // Current state of Bluetooth HCI connection
         uint16_t hci_counter; // Counter used for Bluetooth HCI reset loops
-        uint16_t hci_num_reset_loops; // This value indicate how many times it should read before trying to reset
+        uint16_t hci_num_reset_loops = 0; // This value indicate how many times it should read before trying to reset
         uint16_t hci_event_flag; // HCI flags of received Bluetooth events
         uint8_t inquiry_counter;
 		
@@ -439,11 +463,17 @@ private:
         /* Used to set the Bluetooth Address internally to the PS3 Controllers */
         void setBdaddr(uint8_t* BDADDR);
         void setMoveBdaddr(uint8_t* BDADDR);
+		
 };
 
 /** All Bluetooth services should inherit this class. */
 class BluetoothService {
 public:
+
+		BluetoothService(BTD *p) : pBtd(p) {
+			if(pBtd);
+			pBtd->registerBluetoothService(this); // Register it as a Bluetooth service
+		};
         /**
          * Used to pass acldata to the Bluetooth service.
          * @param ACLData Pointer to the incoming acldata.
@@ -455,7 +485,7 @@ public:
         virtual void Reset() = 0;
         /** Used to disconnect both the L2CAP Channel and the HCI Connection for the Bluetooth service. */
         virtual void disconnect() = 0;
-
+		
         /**
          * Used to call your own function when the device is successfully initialized.
          * @param funcOnInit Function to call.
@@ -463,6 +493,8 @@ public:
         void attachOnInit(void (*funcOnInit)(void)) {
                 pFuncOnInit = funcOnInit; // TODO: This really belong in a class of it's own as it is repeated several times
         };
+		
+
 
 protected:
         /**

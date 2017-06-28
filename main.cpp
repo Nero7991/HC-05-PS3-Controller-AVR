@@ -20,44 +20,35 @@
  * Author : orencollaco
  */ 
 
-#include "BTD.h"
-
+//#include "BTD.h"
+#include "PS3BT.h"
 
 extern volatile uint8_t EVENT_RECEIVED;
+bool EVENT_SERVICED = 0,RESPONSE_AWAITING = 0;
+//extern volatile uint16_t poll_t;
 int main(void)
 {
-    //Init_PWM_T0(1);
-	//Init_PWM_T1(1);
-    //Init_PWM_T2(1);
-	Init_PWM_T3(1);
-	Init_T4(0x01);
-	//fanSpeed(10,10,10,10);
-	USART1_Init(25);		//Initialize USART1 with baud 19200
-	USART0_Init(25);		//Initialize USART0 with baud 19200
-	for(int i = 0; i<3;i++){
-		printStringCRNL1("Waiting");
-		while(!EVENT_RECEIVED){
-			
-		}
-		EVENT_RECEIVED = 0;
-		printStringCRNL1("Ahead");
-		}
-	//_delay_ms(1);
-	
+    setThingsUp();
+	//printStringCRNL1("Waiting for Wake Event");
+	for(char i = 0; i < 3 ;i++){
+		while(!EVENT_RECEIVED);
+			EVENT_RECEIVED = 0;
+	}
+	printStringCRNL1("HCI Wake Event Received");
 	BTD b;
-	b.hci_reset();
-	while (!EVENT_RECEIVED);
-	EVENT_RECEIVED = 0;
-	b.hci_set_local_name("Oren");
-	while(!EVENT_RECEIVED);
-	EVENT_RECEIVED = 0;
-	b.hci_write_scan_enable();
-	
+	PS3BT PSB(&b);
+	b.Initialize();
+	_delay_us(100);
+	//b.Notify(PSTR("Hello"),01);
+	b.hci_state = HCI_INIT_STATE;
+	b.HCI_task();
     while (1) 
     {
-		//relayUSART();
-		//printStringCRNL0("AT");
-    }
+		if(EVENT_RECEIVED){
+			b.HCI_event_task();
+			b.HCI_task();
+		}
+	}
 }
 
 

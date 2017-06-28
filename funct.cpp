@@ -25,12 +25,13 @@ const unsigned char FadeLookUp[] PROGMEM =
 	0xFC, 0xFC, 0xFC, 0xFC, 0xFC, 0xFC, 0xFC, 0xFC, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD,
 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xFF, 0xFF};
 
+volatile uint64_t time;
+volatile uint16_t Event_Length = 299,Buf_top = 299;
+volatile uint8_t hcibuf[300],tx1buf[300];//,acibuf[500];
+volatile uint8_t tx1_ph = 0,tx1_pl = 0;
+volatile uint8_t HCI_AWAKE_RECEIVED,EVENT_RECEIVED = 0,ACL_DATA_RECEIVED = 0;
 
-volatile unsigned int Event_Length = 299,Buf_top = 299;
-volatile uint8_t hcibuf[300];
-volatile uint8_t tx1buf[200],tx1_ph = 0,tx1_pl = 0;
-volatile uint8_t HCI_AWAKE_RECEIVED,EVENT_RECEIVED = 0;
-#define UART_DEBUG 1;
+#define START 0x08
 
 void relayUSART(){
 	char temp;
@@ -51,10 +52,12 @@ void BT_Init(){
 
 void Init_T4(unsigned char prescale){
 	prescale &= 0x07;
-	TCCR4A = 0x02;
+	prescale |= 0x10;
+	TCCR4A = 0x00;
 	TCCR4B = prescale;
+	ICR1 = 8000;
 	sei();
-	TIMSK4 = 0x01;
+	TIMSK4 = 0x20;
 }
 
 void Init_PWM_T0(unsigned char prescale){
@@ -176,7 +179,7 @@ void printStringNewline(char *p){
 	}
 }
 
-void printStringCRNL0(char *p){
+void printStringCRNL0(const char *p){
 	while(*p != 0){
 		USART0_Transmit(*p);
 		p++;
@@ -185,13 +188,13 @@ void printStringCRNL0(char *p){
 	USART0_Transmit('\n');
 }
 
-void printStringCRNL1(char *p){
+void printStringCRNL1(const char *p){
+	USART1_Transmit('\r');
+	USART1_Transmit('\n');
 	while(*p != 0){
 		USART1_Transmit(*p);
 		p++;
 	}
-	USART1_Transmit('\r');
-	USART1_Transmit('\n');
 }
 
 char* hexToString(unsigned char data){
@@ -244,7 +247,7 @@ unsigned char hexToASCII(unsigned char data){
 	}
 }
 
-void printString1(char *p){
+void printString1(const char *p){
 	while(*p != 0){
 		USART1_Transmit(*p);
 		p++;
@@ -254,7 +257,7 @@ void printString1(char *p){
 
 
 void printChar(unsigned char data){
-	USART0_Transmit(data);
+	USART1_Transmit(data);
 }
 
 void USART0_Init(unsigned int ubrr) {
@@ -307,21 +310,19 @@ void USART1_Transmit(unsigned char data){
 	/* Put the data into the buffer, data 
 	is sent serially once written */
 	//UDR1 = data;
-	if(tx1_pl == tx1_ph){
-		tx1_ph = 0;
-		tx1_pl = 0;
-		if(UCSR1B & (1 << UDRIE1))
-			UCSR1B &= ~(1 << UDRIE1);
-	}
 	if((UCSR1A & (1 << UDRE1)) && (tx1_ph == 0)){
-		UDR1 =data;
+		UDR1 = data;
 	}
 	else{
-		if(tx1_ph < 200){
+		if(!(UCSR1B & (1<<UDRIE1)))
+			UCSR1B |= (1 << UDRIE1);
+		if(tx1_pl == tx1_ph){
+			tx1_ph = 0;
+			tx1_pl = 0;
+		}
+		if(tx1_ph < 255){
 			tx1buf[tx1_ph] = data;
 			tx1_ph += 1;
-			if(!(UCSR1B & (1<<UDRIE1)))
-				UCSR1B |= (1 << UDRIE1);
 		}
 	}
 }
@@ -447,40 +448,127 @@ void I2C_Write(unsigned char daddr, unsigned char raddr, unsigned char data){
 	while((TWCR0 & (1<<TWSTO)));
 }
 
+void Notify(const char* str,uint8_t num){
+	char i = 0;
+	while(pgm_read_byte(str) != 0){
+		USART1_Transmit(pgm_read_byte(str));
+		str += 1;
+	}
+}
+
+void D_PrintHex(uint8_t d,uint8_t num){
+	printString1(hexToString(d));
+}
+
+void NotifyS(const char d, uint8_t num){
+	USART1_Transmit(d);
+}
+
+void setThingsUp(){
+	//Init_PWM_T0(1);
+	//Init_PWM_T1(1);
+	//Init_PWM_T2(1);
+	Init_PWM_T3(1);
+	Init_T4(0x05);
+	//fanSpeed(10,10,10,10);
+	USART1_Init(12);		//Initialize USART1 with baud 19200
+	USART0_Init(25);		//Initialize USART0 with baud 19200
+}
+
+uint64_t millis(){
+	return time;
+}
+
+void delay(uint16_t t){
+	static uint64_t tp;
+	tp = time + t;
+	while(time != tp);
+}
+
 ISR(USART0_RX_vect){
-	static uint8_t EVENT_HEADER_RECEIVED = 0,dtemp,Event_Head,count = 0;
+	static uint8_t EVENT_HEADER_RECEIVED = 0,dtemp,Event_Head;
+	static uint16_t count;
 	dtemp = UDR0;
+	#ifdef ULTRA_DEBUG
 	USART1_Transmit(dtemp);
-	if(!EVENT_HEADER_RECEIVED && dtemp <= 0x04 && dtemp != 0){
+	#endif
+	if(!EVENT_HEADER_RECEIVED && dtemp <= 0x04 && dtemp > 0x01){
 		Event_Head = dtemp;
 		EVENT_HEADER_RECEIVED = 1;
 		EVENT_RECEIVED = 0;
 		#ifdef UART_DEBUG
-		printStringCRNL1("EV = 0");
-		printStringCRNL1("Header");
+		switch(Event_Head){
+			case HCI_EVENT_PACKET:
+			printStringCRNL1("EHD");
+			break;
+			case HCI_ACL_DATA_PACKET:
+			printStringCRNL1("AHD");
+			break;
+			case HCI_SCO_DATA_PACKET:
+			printStringCRNL1("SHD");
+			break;
+		}
 		#endif
 		return;
 	}
 	
 	if(EVENT_HEADER_RECEIVED && count < 300){
-		hcibuf[count] = dtemp;
-		if(count == 1 && Event_Head == 0x04){
-			Buf_top = dtemp + 2;
-		}
-		count += 1;
-		if(count == Buf_top){
-			Event_Length = Buf_top;
-			Buf_top = 299;
-			EVENT_RECEIVED = 1;
-			#ifdef UART_DEBUG
-			printStringCRNL1("EV = 1");
-			#endif
-			count = 0;
-			EVENT_HEADER_RECEIVED = 0;
-			#ifdef UART_DEBUG
-			printStringCRNL1("Event");
-			#endif
-			return;
+		switch(Event_Head){						//Switch on HCI Header type(Only UART)
+			case HCI_ACL_DATA_PACKET:
+			//aclbuf[count] = dtemp;
+			if(count == 1 && count == 2){
+				if(count == 1)
+				Buf_top = dtemp << 8;
+				if(count == 2)
+				Buf_top = dtemp + 2;
+				#ifdef UART_DEBUG
+				printStringCRNL1("L = ");
+				printString1(hexToString(dtemp));
+				#endif
+			}
+			count += 1;
+			if(count == Buf_top){
+				Event_Length = Buf_top;
+				Buf_top = 299;
+				ACL_DATA_RECEIVED = 1;
+				#ifdef UART_DEBUG
+				//printStringCRNL1("EV1");
+				#endif
+				count = 0;
+				EVENT_HEADER_RECEIVED = 0;
+				#ifdef UART_DEBUG
+				printStringCRNL1("DA");
+				#endif
+				return;
+			}
+			break;
+			case HCI_SCO_DATA_PACKET:
+			break;
+			case HCI_EVENT_PACKET:
+			hcibuf[count] = dtemp;
+			if(count == 1){
+				Buf_top = dtemp + 2;
+				#ifdef UART_DEBUG
+				printStringCRNL1("L = ");
+				printString1(hexToString(dtemp));
+				#endif
+			}
+			count += 1;
+			if(count == Buf_top){
+				Event_Length = Buf_top;
+				Buf_top = 299;
+				EVENT_RECEIVED = 1;
+				#ifdef UART_DEBUG
+				//printStringCRNL1("EV1");
+				#endif
+				count = 0;
+				EVENT_HEADER_RECEIVED = 0;
+				#ifdef UART_DEBUG
+				printStringCRNL1("ET");
+				#endif
+				return;
+			}
+			break;
 		}
 	}
 	if(count >= 300){
@@ -491,21 +579,27 @@ ISR(USART0_RX_vect){
 
 ISR(USART1_UDRE_vect){
 	//RTS ^= 1;
+	//USART1_Transmit(tx1_ph);
+	//USART1_Transmit(0xAA);
+	//USART1_Transmit(tx1_pl);
+	if(tx1_ph == 0){
+		if(UCSR1B & (1 << UDRIE1))
+		UCSR1B &= ~(1 << UDRIE1);
+	}
 	if(tx1_ph){
 		UDR1 = tx1buf[tx1_pl];
 		tx1_pl += 1;
 		if(tx1_pl == tx1_ph){
 			tx1_ph = 0;
 			tx1_pl = 0;
-			if(UCSR1B & (1 << UDRIE1))
-			UCSR1B &= ~(1 << UDRIE1);
 		}
 	}
 }
 
-ISR(TIMER4_OVF_vect){
-	
+ISR(TIMER4_CAPT_vect){
+	//RTS ^= 1;
 	static unsigned char i,up = 1,count = 0,d = 0;
+	time += 1;	
 	if(count > 30){
 		count = 0;
 		if( i < 224 && up){
