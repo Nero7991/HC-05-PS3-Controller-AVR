@@ -12,7 +12,7 @@ Progress:
 All the HCI commands functions work.
 When a complete event is received, EVENT_RECEIVED flag is set and EVENT is available in hcibuf. 
 
-This project is still work in progress...
+Refer to the main.cpp file for an example of how to use this library
 
 Contact : Oren 
 orencollaco97@gmail.com
