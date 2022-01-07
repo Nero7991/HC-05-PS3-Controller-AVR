@@ -17,7 +17,7 @@
 
 #ifndef _btd_h_
 #define _btd_h_
-#include "func.h"
+#include "Motor.h"
 
 #define DEBUG_UART_HOST 1;
 #define EXTRADEBUG 1;
@@ -61,6 +61,12 @@ extern volatile uint8_t EVENT_RECEIVED,ACL_DATA_RECEIVED;
 #define HCI_DISABLE_SCAN_STATE          15
 #define HCI_DONE_STATE                  16
 #define HCI_DISCONNECT_STATE            17
+#define HCI_CHANGE_PACKET_TYPE			18
+#define HCI_READ_VERSION				19	
+#define HCI_READ_REMOTE_NAME			20
+#define HCI_WRITE_LINK_POLICY			21
+#define HCI_WRITE_AUTHENTICATION_STATE	22
+#define HCI_PSCAN_REP_STATE				23
 
 /* HCI event flags*/
 #define HCI_FLAG_CMD_COMPLETE           (1UL << 0)
@@ -72,6 +78,9 @@ extern volatile uint8_t EVENT_RECEIVED,ACL_DATA_RECEIVED;
 #define HCI_FLAG_READ_VERSION           (1UL << 6)
 #define HCI_FLAG_DEVICE_FOUND           (1UL << 7)
 #define HCI_FLAG_CONNECT_EVENT          (1UL << 8)
+#define HCI_FLAG_CHANGE_PTYPE_COMPLETE  (1UL << 9)
+#define HCI_FLAG_REMOTE_VER_COMPLETE	(1UL << 10)
+#define HCI_FLAG_PSCAN_REP				(1UL << 11)
 
 /* Macros for HCI event flag tests */
 #define hci_check_flag(flag) (hci_event_flag & (flag))
@@ -95,6 +104,7 @@ extern volatile uint8_t EVENT_RECEIVED,ACL_DATA_RECEIVED;
 #define EV_LINK_KEY_NOTIFICATION                        0x18
 #define EV_DATA_BUFFER_OVERFLOW                         0x1A
 #define EV_MAX_SLOTS_CHANGE                             0x1B
+#define EV_CHANGE_PACKET_TYPE_COMPLETE					0x1D
 #define EV_READ_REMOTE_VERSION_INFORMATION_COMPLETE     0x0C
 #define EV_QOS_SETUP_COMPLETE                           0x0D
 #define EV_COMMAND_COMPLETE                             0x0E
@@ -195,7 +205,7 @@ extern volatile uint8_t EVENT_RECEIVED,ACL_DATA_RECEIVED;
 #define PAIR    1
 class BluetoothService;
 
-extern uint8_t hcibuf[300];
+extern uint8_t hcibuf[300],aclbuf[500];
 
 /**
  * The Bluetooth Dongle class will take care of all the USB communication
@@ -272,6 +282,18 @@ public:
         /** Used to a set the class of the device. */
         void hci_write_class_of_device();
         /**@}*/
+		/* Change packet type allowed on the link */
+		void hci_change_packet_type();
+		
+		void hci_read_remote_version();
+		
+		void hci_write_link_policy();
+		
+		void hci_write_link_timeout();
+		
+		void hci_set_AFH();
+		
+		void hci_write_authentication_enable();
 
         /** @name L2CAP Commands */
         /**

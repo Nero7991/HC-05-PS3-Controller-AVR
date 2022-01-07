@@ -36,10 +36,12 @@
 #define HCI_SCO_DATA_PACKET 0x03
 #define HCI_EVENT_PACKET 0x04
 
-
-
 //#define UART_DEBUG 1
 //#define ULTRA_DEBUG 1
+
+
+#define CTS GET_BITFIELD(PINB).bit7
+#define RTS GET_BITFIELD(PORTB).bit6
 
 typedef struct bitstruct
 {
@@ -52,11 +54,11 @@ typedef struct bitstruct
 	unsigned char bit6 : 1;
 	unsigned char bit7 : 1;
 }bit_field;
-
 #define GET_BITFIELD(addr)( *((volatile bit_field*)&(addr))  )
-#define RTS GET_BITFIELD(PORTB).bit6
-#define CTS GET_BITFIELD(PINB).bit7
 
+
+void setIndicatorCount(uint16_t count1);
+void updateFade();
 void setThingsUp();
 uint64_t millis();
 void delay(uint16_t t);

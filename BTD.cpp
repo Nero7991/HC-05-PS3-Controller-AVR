@@ -34,11 +34,11 @@ pollInterval(0),
 bPollEnable(true) // Don't start polling before dongle is connected
 {
 	btService = NULL;
-	Initialize(); // Set all variables, endpoint structs etc. to default values
+	//Initialize(); // Set all variables, endpoint structs etc. to default values
 }
 
 void BTD::Initialize() {
-	//btService->Reset(); // Reset all Bluetooth services
+	btService->Reset(); // Reset all Bluetooth services
 	connectToWii = false;
 	incomingWii = false;
 	connectToHIDDevice = false;
@@ -46,8 +46,9 @@ void BTD::Initialize() {
 	incomingPS4 = false;
 	bAddress = 0; // Clear device address
 	qNextPollTime = 0; // Reset next poll time
-	pollInterval = 0;
+	pollInterval = 3;
 	bPollEnable = true; // Don't start polling before dongle is connected
+	hci_state = HCI_INIT_STATE;
 }
 
 void BTD::HCI_event_task() {
@@ -206,7 +207,8 @@ void BTD::HCI_event_task() {
 		Notify(PSTR(" "), 0x80);
 		D_PrintHex(classOfDevice[0], 0x80);
 		#endif
-		hci_set_flag(HCI_FLAG_INCOMING_REQUEST);
+		hci_set_flag(HCI_FLAG_INCOMING_REQUEST);    //hci_set_flag(HCI_FLAG_INCOMING_REQUEST);
+		hci_state = HCI_CONNECT_IN_STATE;
 		break;
 
 		case EV_PIN_CODE_REQUEST:
@@ -260,17 +262,81 @@ void BTD::HCI_event_task() {
 		break;
 		/* We will just ignore the following events */
 		case EV_NUM_COMPLETE_PKT:
-		case EV_ROLE_CHANGED:
-		case EV_PAGE_SCAN_REP_MODE:
-		case EV_LOOPBACK_COMMAND:
-		case EV_DATA_BUFFER_OVERFLOW:
-		case EV_CHANGE_CONNECTION_LINK:
-		case EV_MAX_SLOTS_CHANGE:
-		case EV_QOS_SETUP_COMPLETE:
-		case EV_LINK_KEY_NOTIFICATION:
-		case EV_ENCRYPTION_CHANGE:
-		case EV_READ_REMOTE_VERSION_INFORMATION_COMPLETE:
+		#ifdef DEBUG_UART_HOST
+		Notify(PSTR("\r\nNum Complete Packet"), 0x80);
+		#endif
 		break;
+		
+		case EV_ROLE_CHANGED:
+		#ifdef DEBUG_UART_HOST
+		Notify(PSTR("\r\nRole Changed"), 0x80);
+		#endif
+		break;
+		
+		case EV_PAGE_SCAN_REP_MODE:
+		if(HCI_FLAG_PSCAN_REP){
+			hci_set_flag(HCI_FLAG_PSCAN_REP);
+		}
+		break;
+		
+		case EV_LOOPBACK_COMMAND:
+		#ifdef DEBUG_UART_HOST
+		Notify(PSTR("\r\nLoopBack Command"), 0x80);
+		#endif
+		break;
+		case EV_DATA_BUFFER_OVERFLOW:
+		#ifdef DEBUG_UART_HOST
+		Notify(PSTR("\r\nData Buffer Overflow Event"), 0x80);
+		#endif
+		break;
+		case EV_CHANGE_CONNECTION_LINK:
+		#ifdef DEBUG_UART_HOST
+		Notify(PSTR("\r\nChange Connection Link Event"), 0x80);
+		#endif
+		break;
+		case EV_MAX_SLOTS_CHANGE:
+		#ifdef DEBUG_UART_HOST
+		Notify(PSTR("\r\nMax slots changed event"), 0x80);
+		#endif
+		break;
+		case EV_QOS_SETUP_COMPLETE:
+		#ifdef DEBUG_UART_HOST
+		Notify(PSTR("\r\nQOS Setup Complete Event"), 0x80);
+		#endif
+		break;
+		case EV_LINK_KEY_NOTIFICATION:
+		#ifdef DEBUG_UART_HOST
+		Notify(PSTR("\r\nLink key notification event"), 0x80);
+		#endif
+		break;
+		case EV_ENCRYPTION_CHANGE:
+		#ifdef DEBUG_UART_HOST
+		Notify(PSTR("\r\nEncryption Change Event"), 0x80);
+		#endif
+		break;
+		case EV_READ_REMOTE_VERSION_INFORMATION_COMPLETE:
+		if(!hcibuf[2]){
+		#ifdef DEBUG_UART_HOST
+		Notify(PSTR("\r\nRead remote version complete"), 0x80);
+		#endif
+		hci_set_flag(HCI_FLAG_REMOTE_VER_COMPLETE);
+		}
+		else{
+			Notify(PSTR("\r\nRead remote version failed"), 0x80);
+		}
+		break;
+		case EV_CHANGE_PACKET_TYPE_COMPLETE:
+		if(!hcibuf[2]){
+		hci_set_flag(HCI_FLAG_CHANGE_PTYPE_COMPLETE);
+		#ifdef DEBUG_UART_HOST
+		Notify(PSTR("\r\nChange Packet type successful"), 0x80);
+		#endif
+		}
+		else{
+			#ifdef DEBUG_UART_HOST
+			Notify(PSTR("\r\nChange Packet type failed"), 0x80);
+			#endif
+		}
 		#ifdef EXTRADEBUG
 		default:
 		if(hcibuf[0] != 0x00) {
@@ -302,7 +368,7 @@ void BTD::HCI_task() {
 			#ifdef DEBUG_UART_HOST
 			Notify(PSTR("\r\nHCI Reset complete"), 0x80);
 			#endif
-			hci_state = HCI_WRITE_EN_STATE;
+			hci_state = HCI_CLASS_STATE;
 			hci_write_class_of_device();
 			} else if(hci_counter > hci_num_reset_loops) {
 			hci_num_reset_loops *= 10;
@@ -446,7 +512,7 @@ void BTD::HCI_task() {
 				hci_authentication_request(); // This will start the pairing with the Wiimote
 				hci_state = HCI_SCANNING_STATE;
 				} else {
-				#ifdef DEBUG_USB_HOST
+				#ifdef DEBUG_UART_HOST
 				Notify(PSTR("\r\nTrying to connect one more time..."), 0x80);
 				#endif
 				hci_connect(); // Try to connect one more time
@@ -518,9 +584,19 @@ void BTD::HCI_task() {
 			if(pairWithWii && checkRemoteName)
 			hci_state = HCI_CONNECT_DEVICE_STATE;
 			else {
-				hci_accept_connection();
-				hci_state = HCI_CONNECTED_STATE;
+				hci_write_authentication_enable();
+				hci_state = HCI_WRITE_AUTHENTICATION_STATE;
 			}
+		}
+		break;
+
+		case HCI_WRITE_AUTHENTICATION_STATE:
+		if(hci_check_flag(HCI_FLAG_CMD_COMPLETE)){
+			#ifdef DEBUG_UART_HOST
+			Notify(PSTR("\r\nWrite authentication Enabled"), 0x80);
+			#endif
+			hci_accept_connection();
+			hci_state = HCI_CONNECTED_STATE;
 		}
 		break;
 
@@ -541,12 +617,53 @@ void BTD::HCI_task() {
 			l2capConnectionClaimed = false;
 			sdpConnectionClaimed = false;
 			rfcommConnectionClaimed = false;
-
 			hci_event_flag = 0;
-			hci_state = HCI_DONE_STATE;
+			hci_state = HCI_PSCAN_REP_STATE;
 		}
 		break;
-
+		
+		case HCI_PSCAN_REP_STATE:
+		if(hci_check_flag(HCI_FLAG_PSCAN_REP)){
+				#ifdef DEBUG_UART_HOST
+				Notify(PSTR("\r\nPage Scan Repetition Mode Change Event"),0x80);
+				#endif
+		}
+		//hci_read_remote_version();
+		hci_state = HCI_DONE_STATE;
+		break;
+		
+		case HCI_READ_VERSION:
+			if(hci_check_flag(HCI_FLAG_REMOTE_VER_COMPLETE)){
+				#ifdef DEBUG_UART_HOST
+				Notify(PSTR("\r\nReceived Remote Version"),0x80);
+				#endif
+			hci_state = HCI_READ_REMOTE_NAME;
+			hci_remote_name();
+			}
+		break;
+		
+		case HCI_READ_REMOTE_NAME:
+		if(hci_check_flag(HCI_FLAG_REMOTE_NAME_COMPLETE)){
+			#ifdef DEBUG_UART_HOST
+			Notify(PSTR("\r\nReceived Remote Name"),0x80);
+			#endif
+		hci_change_packet_type();
+		hci_state = HCI_CHANGE_PACKET_TYPE;
+		}
+		break;
+		
+		case HCI_CHANGE_PACKET_TYPE:
+			if(hci_check_flag(HCI_FLAG_CHANGE_PTYPE_COMPLETE)){
+				#ifdef DEBUG_UART_HOST
+				Notify(PSTR("\r\nPacket type changed"),0x80);
+				#endif
+			}
+			hci_state = HCI_DONE_STATE;
+		break;
+		
+		case HCI_WRITE_LINK_POLICY:
+		break;
+		
 		case HCI_DONE_STATE:
 		hci_counter++;
 		if(hci_counter > 1000) { // Wait until we have looped 1000 times to make sure that the L2CAP connection has been started
@@ -581,25 +698,24 @@ void BTD::HCI_task() {
 void BTD::ACL_event_task() {
 	uint16_t length = BULK_MAXPKTSIZE;
 		if(length > 0) { // Check if any data was read
-			btService->ACLData(l2capinbuf);
+			btService->ACLData(aclbuf);
 			btService->Run();
 		}
 }
 
 uint8_t BTD::BPoll() {
-	if(1) { // Don't poll if shorter than polling interval
-		 // Set new poll time
+	if(((int32_t)((uint32_t)millis() - qNextPollTime) >= 0L) || EVENT_RECEIVED || ACL_DATA_RECEIVED) { // Don't poll if shorter than polling interval
 		if(EVENT_RECEIVED){
 			EVENT_RECEIVED = 0;
-			HCI_event_task(); // Poll the HCI event pipe
-			HCI_task(); // HCI state machine
-			if(ACL_DATA_RECEIVED){
-				ACL_DATA_RECEIVED = 0;
-				ACL_event_task(); // Poll the ACL input pipe too
-			}
+			HCI_event_task();
+			HCI_task();
 		}
-		//qNextPollTime = (uint32_t)millis() + pollInterval;
+		if(ACL_DATA_RECEIVED)
+		ACL_DATA_RECEIVED = 0;
+		ACL_event_task();
 	}
+	qNextPollTime = (uint32_t)millis() + pollInterval; // Set new poll time
+	//printStringCRNL1("Polling");
 	return 0;
 }
 
@@ -855,6 +971,77 @@ void BTD::hci_write_class_of_device() { // See http://bluetooth-pentest.narod.ru
 
         HCI_Command(hcibuf, 6);
 }
+
+void BTD::hci_change_packet_type() {
+	hcibuf[0] = 0x0f; // HCI OCF = 0F
+	hcibuf[1] = 0x01 << 2; // HCI OGF = 1
+	hcibuf[2] = 0x04; // parameter length 4
+	hcibuf[3] = 0x0c;
+	hcibuf[4] = 0x00;
+	hcibuf[5] = 0x18;
+	hcibuf[6] = 0xcc;
+	HCI_Command(hcibuf, 7);
+}
+
+void BTD::hci_read_remote_version(){
+	 hcibuf[0] = 0x1d; // HCI OCF = 1D
+	 hcibuf[1] = 0x01 << 2; // HCI OGF = 3
+	 hcibuf[2] = 0x02; // parameter length = 3
+	 hcibuf[3] = 0x0c; 
+	 hcibuf[4] = 0x00; 
+
+	 HCI_Command(hcibuf, 5);
+}
+
+void BTD::hci_write_link_policy(){
+	hcibuf[0] = 0x0d; // HCI OCF = 0D
+	hcibuf[1] = 0x02 << 2; // HCI OGF = 1
+	hcibuf[2] = 0x04; // parameter length 4
+	hcibuf[3] = 0x0c;
+	hcibuf[4] = 0x00;
+	hcibuf[5] = 0x0f;
+	hcibuf[6] = 0x00;
+	HCI_Command(hcibuf, 7);
+}
+
+void BTD::hci_write_link_timeout(){
+	hcibuf[0] = 0x37; // HCI OCF = 37
+	hcibuf[1] = 0x03 << 2; // HCI OGF = 1
+	hcibuf[2] = 0x04; // parameter length 4
+	hcibuf[3] = 0x0c;
+	hcibuf[4] = 0x00;
+	hcibuf[5] = 0x80;
+	hcibuf[6] = 0x3e;
+	HCI_Command(hcibuf, 7);
+}
+
+void BTD::hci_set_AFH() {
+	hci_clear_flag(HCI_FLAG_CONNECT_COMPLETE | HCI_FLAG_CONNECT_EVENT);
+	hcibuf[0] = 0x05;
+	hcibuf[1] = 0x01 << 2; // HCI OGF = 1
+	hcibuf[2] = 0x0D; // parameter Total Length = 13
+	hcibuf[9] = 0x18; // DM1 or DH1 may be used
+	hcibuf[10] = 0xCC; // DM3, DH3, DM5, DH5 may be used
+	hcibuf[11] = 0x01; // Page repetition mode R1
+	hcibuf[12] = 0x00; // Reserved
+	hcibuf[13] = 0x00; // Clock offset
+	hcibuf[14] = 0x00; // Invalid clock offset
+	hcibuf[15] = 0x00; // Do not allow role switch
+
+	HCI_Command(hcibuf, 16);
+}
+
+void BTD::hci_write_authentication_enable(){
+	hcibuf[0] = 0x20; // HCI OCF = 20
+	hcibuf[1] = 0x03 << 2; // HCI OGF = 3
+	hcibuf[2] = 0x01; // parameter length = 1
+	hcibuf[3] = 0x00;
+
+	HCI_Command(hcibuf, 4);
+}
+
+
+
 /*******************************************************************
  *                                                                 *
  *                        HCI ACL Data Packet                      *
@@ -895,10 +1082,9 @@ void BTD::L2CAP_Command(uint16_t handle, uint8_t* data, uint8_t nbytes, uint8_t 
         for(uint16_t i = 0; i < nbytes; i++) // L2CAP C-frame
                 buf[8 + i] = data[i];
 		USART0_Transmit(0x02);	//HCI ACL Data Header
-		for(uint16_t i = 0; i < nbytes + 8; i++){
-			USART0_Transmit(data[i]);
+		for(uint16_t i = 0; i < (nbytes + 8); i++){
+			USART0_Transmit(buf[i]);
 		}
-	 // This small delay prevents it from overflowing if it fails
 #ifdef DEBUG_USB_HOST
                 Notify(PSTR("\r\nError sending L2CAP message: 0x"), 0x80);
                 Notify(PSTR(" - Channel ID: "), 0x80);

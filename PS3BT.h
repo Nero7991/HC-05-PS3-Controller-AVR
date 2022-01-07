@@ -21,7 +21,7 @@
 #include "BTD.h"
 #include "PS3Enums.h"
 
-
+//#define PRINTREPORT // Uncomment to print the report send by the PS3 Controllers
 #define HID_BUFFERSIZE 50 // Size of the buffer for the Playstation Motion Controller
 #define PI 3.141592
 #define RAD_TO_DEG 57.29577

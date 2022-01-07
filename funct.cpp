@@ -26,11 +26,10 @@ const unsigned char FadeLookUp[] PROGMEM =
 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xFF, 0xFF};
 
 volatile uint64_t time;
-volatile uint16_t Event_Length = 299,Buf_top = 299;
-volatile uint8_t hcibuf[300],tx1buf[300];//,acibuf[500];
+volatile uint16_t Event_Length = 299,Buf_top = 299,lcount;
+volatile uint8_t hcibuf[300] = {0},tx1buf[255] = {0},aclbuf[300] = {0};
 volatile uint8_t tx1_ph = 0,tx1_pl = 0;
 volatile uint8_t HCI_AWAKE_RECEIVED,EVENT_RECEIVED = 0,ACL_DATA_RECEIVED = 0;
-
 #define START 0x08
 
 void relayUSART(){
@@ -55,7 +54,7 @@ void Init_T4(unsigned char prescale){
 	prescale |= 0x10;
 	TCCR4A = 0x00;
 	TCCR4B = prescale;
-	ICR1 = 8000;
+	ICR4 = 2000;
 	sei();
 	TIMSK4 = 0x20;
 }
@@ -69,16 +68,16 @@ void Init_PWM_T0(unsigned char prescale){
 }
 
 void Init_PWM_T1(unsigned char prescale){
-	TCCR0A = 0xA1;
+	TCCR1A = 0xA1;
 	prescale &= 0x07;
-	TCCR0B |= prescale;
-	DDRB |= 0x17;
+	TCCR1B = prescale;
+	DDRB |= 0x1E;
 }
 
 void Init_PWM_T2(unsigned char prescale){
 	TCCR2A = 0xA1;
 	prescale &= 0x07;
-	TCCR2B |= prescale;
+	TCCR2B = prescale;
 	DDRD |= 0x08;
 	DDRB |= 0x08;
 	
@@ -465,14 +464,28 @@ void NotifyS(const char d, uint8_t num){
 }
 
 void setThingsUp(){
+	DDRB = 0x19;
+	DDRD = 0x80;
+	PORTB = 0x00;
+	PORTD = 0x00;
 	//Init_PWM_T0(1);
 	//Init_PWM_T1(1);
 	//Init_PWM_T2(1);
 	Init_PWM_T3(1);
-	Init_T4(0x05);
+	Init_T4(0x01);			//Initialize Timer 4
 	//fanSpeed(10,10,10,10);
 	USART1_Init(12);		//Initialize USART1 with baud 19200
-	USART0_Init(25);		//Initialize USART0 with baud 19200
+	USART0_Init(1);		//Initialize USART0 with baud 19200
+}
+
+void clearhcibuf(){
+	for(uint16_t i; i < 8;i++){
+		hcibuf[i] = 0;
+	}
+}
+
+void clearaclbuf(){
+	
 }
 
 uint64_t millis(){
@@ -482,22 +495,47 @@ uint64_t millis(){
 void delay(uint16_t t){
 	static uint64_t tp;
 	tp = time + t;
-	while(time != tp);
+	while(time <= tp);
 }
 
-ISR(USART0_RX_vect){
-	static uint8_t EVENT_HEADER_RECEIVED = 0,dtemp,Event_Head;
+void updateFade(){
+	
+}
+
+void setIndicatorCount(uint16_t count1){
+	lcount = count1;	
+}
+
+void setIndicatorMode(uint8_t mode){
+	switch(mode){
+		case 1:
+		break;
+			
+	}
+}
+
+ISR(USART0_RX_vect){											//Takes of the incoming data on the RX0 line
+	static uint8_t HEADER_RECEIVED = 0,dtemp,Head;
 	static uint16_t count;
 	dtemp = UDR0;
 	#ifdef ULTRA_DEBUG
-	USART1_Transmit(dtemp);
+	USART1_Transmit(dtemp);										//Used to debug raw received data
 	#endif
-	if(!EVENT_HEADER_RECEIVED && dtemp <= 0x04 && dtemp > 0x01){
-		Event_Head = dtemp;
-		EVENT_HEADER_RECEIVED = 1;
-		EVENT_RECEIVED = 0;
+	if(!HEADER_RECEIVED && dtemp <= 0x04 && dtemp > 0x01){
+		Head = dtemp;
+		HEADER_RECEIVED = 1;		//HCI Header arrived
+		switch(Head){
+			case HCI_EVENT_PACKET:
+			EVENT_RECEIVED = 0;
+			break;
+			case HCI_ACL_DATA_PACKET:
+			ACL_DATA_RECEIVED = 0;
+			break;
+			case HCI_SCO_DATA_PACKET:
+			break;
+		}
 		#ifdef UART_DEBUG
-		switch(Event_Head){
+		switch(Head){
 			case HCI_EVENT_PACKET:
 			printStringCRNL1("EHD");
 			break;
@@ -512,40 +550,49 @@ ISR(USART0_RX_vect){
 		return;
 	}
 	
-	if(EVENT_HEADER_RECEIVED && count < 300){
-		switch(Event_Head){						//Switch on HCI Header type(Only UART)
-			case HCI_ACL_DATA_PACKET:
-			//aclbuf[count] = dtemp;
-			if(count == 1 && count == 2){
-				if(count == 1)
-				Buf_top = dtemp << 8;
+	if(HEADER_RECEIVED && count < 300){
+		switch(Head){						//Switch on HCI Header type which is used in UART H4 
+			case HCI_ACL_DATA_PACKET:		//Incoming data is a HCI ACL Data Packet
+			aclbuf[count] = dtemp;
+			if(count == 2 || count == 3){		//If count is 2 or 3, dtemp contains the total length which is used set the buf_top
 				if(count == 2)
-				Buf_top = dtemp + 2;
+				Buf_top = dtemp + 4;
+				if(count == 3)
+				Buf_top |= (dtemp << 8);
 				#ifdef UART_DEBUG
+				if(count == 3){
 				printStringCRNL1("L = ");
-				printString1(hexToString(dtemp));
+				printString1(hexToString((uint8_t)(Buf_top >> 8)));
+				printString1(hexToString((uint8_t)Buf_top));
+				}
 				#endif
 			}
 			count += 1;
-			if(count == Buf_top){
+			if(count == Buf_top){				//Packet completely received
 				Event_Length = Buf_top;
 				Buf_top = 299;
 				ACL_DATA_RECEIVED = 1;
 				#ifdef UART_DEBUG
-				//printStringCRNL1("EV1");
 				#endif
 				count = 0;
-				EVENT_HEADER_RECEIVED = 0;
+				ACL_DATA_RECEIVED = 1;
 				#ifdef UART_DEBUG
 				printStringCRNL1("DA");
 				#endif
+				HEADER_RECEIVED = 0;
 				return;
 			}
 			break;
-			case HCI_SCO_DATA_PACKET:
+			case HCI_SCO_DATA_PACKET:		
 			break;
-			case HCI_EVENT_PACKET:
+			case HCI_EVENT_PACKET:				//Incoming data is HCI Event Packet 
 			hcibuf[count] = dtemp;
+			#ifdef UART_DEBUG
+			if(count == 0){
+				printStringCRNL1("E = ");
+				printString1(hexToString(dtemp));
+			}
+			#endif
 			if(count == 1){
 				Buf_top = dtemp + 2;
 				#ifdef UART_DEBUG
@@ -559,10 +606,9 @@ ISR(USART0_RX_vect){
 				Buf_top = 299;
 				EVENT_RECEIVED = 1;
 				#ifdef UART_DEBUG
-				//printStringCRNL1("EV1");
 				#endif
 				count = 0;
-				EVENT_HEADER_RECEIVED = 0;
+				HEADER_RECEIVED = 0;
 				#ifdef UART_DEBUG
 				printStringCRNL1("ET");
 				#endif
@@ -572,16 +618,16 @@ ISR(USART0_RX_vect){
 		}
 	}
 	if(count >= 300){
-		printStringCRNL1("Buffer Overrun");
-		
+		printStringCRNL1("Buffer Overrun");				
+		//HEADER_RECEIVED = 0;
+		//Buf_top = 299;
 	}
 }
 
-ISR(USART1_UDRE_vect){
-	//RTS ^= 1;
-	//USART1_Transmit(tx1_ph);
-	//USART1_Transmit(0xAA);
-	//USART1_Transmit(tx1_pl);
+
+/*This ISR will be called when data is ready to be transmitted
+*/
+ISR(USART1_UDRE_vect){						//Handles the transmission of TX1 buffer 
 	if(tx1_ph == 0){
 		if(UCSR1B & (1 << UDRIE1))
 		UCSR1B &= ~(1 << UDRIE1);
@@ -596,51 +642,30 @@ ISR(USART1_UDRE_vect){
 	}
 }
 
-ISR(TIMER4_CAPT_vect){
+/*This ISR will be called every millisecond
+and will increment time variable to keep track of milliseconds 
+passed*/
+ISR(TIMER4_CAPT_vect){			//Handles the millis function and LED fading
 	//RTS ^= 1;
-	static unsigned char i,up = 1,count = 0,d = 0;
+	static unsigned char i,up = 1;
+	static uint16_t count1;
 	time += 1;	
-	if(count > 30){
-		count = 0;
-		if( i < 224 && up){
+	if(count1 >= lcount && 1){
+		count1 = 0;
+		if( i < 150 && up){
 			i += 1;
 			OCR3B = pgm_read_byte(&(FadeLookUp[i]));
-			if(d){
-				OCR0A = OCR3B;
-				OCR0B = 0;
-				PORTB &= ~0x01;
-				PORTD |= 0x80;
-			}
-			if(!d){
-				OCR0B = OCR3B;
-				OCR0A = 0;
-				PORTB |= 0x01;
-				PORTD &= ~0x80;
-			}
 		}
-		if(i == 224 && up){
+		if(i == 150 && up){
 			up = 0;
 		}
 		if(i > 0 && !up){
 			i -= 1;
 			OCR3B = pgm_read_byte(&(FadeLookUp[i]));
-			if(d){
-				OCR0A = OCR3B;
-				OCR0B = 0;
-				PORTB &= ~0x01;
-				PORTD |= 0x80;
-			}
-			if(!d){
-				OCR0B = OCR3B;
-				OCR0A = 0;
-				PORTB |= 0x01;
-				PORTD &= ~0x80;
-			}
 		}
 		if(i == 0 && !up){
 			up = 1;
-			d ^= 1;
 		}
 	}
-	count += 1;
+	count1 += 1;
 }
